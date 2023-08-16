@@ -39,9 +39,14 @@ def generate_launch_description() -> LaunchDescription:
     """
     args = [
         DeclareLaunchArgument(
-            "config_filepath",
+            "localization_config_filepath",
             default_value=None,
-            description="The path to the configuration YAML file.",
+            description="The path to the localization configuration YAML file.",
+        ),
+        DeclareLaunchArgument(
+            "ekf_config_filepath",
+            default_value=None,
+            description="The path to the EKF configuration YAML file.",
         ),
         DeclareLaunchArgument(
             "localization_source",
@@ -84,7 +89,7 @@ def generate_launch_description() -> LaunchDescription:
             name="camera",
             output="screen",
             parameters=[
-                LaunchConfiguration("config_filepath"),
+                LaunchConfiguration("localization_config_filepath"),
                 {"use_sim_time": use_sim_time},
             ],
             condition=IfCondition(
@@ -105,7 +110,7 @@ def generate_launch_description() -> LaunchDescription:
             name="aruco_marker_localizer",
             output="screen",
             parameters=[
-                LaunchConfiguration("config_filepath"),
+                LaunchConfiguration("localization_config_filepath"),
                 {"use_sim_time": use_sim_time},
             ],
             condition=IfCondition(
@@ -118,7 +123,7 @@ def generate_launch_description() -> LaunchDescription:
             name="qualisys_mocap",
             output="screen",
             parameters=[
-                LaunchConfiguration("config_filepath"),
+                LaunchConfiguration("localization_config_filepath"),
                 {"use_sim_time": use_sim_time},
             ],
             condition=IfCondition(
@@ -139,7 +144,7 @@ def generate_launch_description() -> LaunchDescription:
             name="qualisys_localizer",
             output="screen",
             parameters=[
-                LaunchConfiguration("config_filepath"),
+                LaunchConfiguration("localization_config_filepath"),
                 {"use_sim_time": use_sim_time},
             ],
             condition=IfCondition(
@@ -152,7 +157,7 @@ def generate_launch_description() -> LaunchDescription:
             name="gazebo_localizer",
             output="screen",
             parameters=[
-                LaunchConfiguration("config_filepath"),
+                LaunchConfiguration("localization_config_filepath"),
                 {"use_sim_time": use_sim_time},
             ],
             condition=IfCondition(
@@ -171,6 +176,17 @@ def generate_launch_description() -> LaunchDescription:
             condition=IfCondition(
                 PythonExpression(["'", localization_source, "' == 'camera'"])
             ),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution(
+                    [FindPackageShare("blue_localization"), "ekf.launch.py"]
+                )
+            ),
+            launch_arguments={
+                "config_filepath": LaunchConfiguration("ekf_config_filepath"),
+                "use_sim_time": use_sim_time,
+            }.items()
         )
     ]
 

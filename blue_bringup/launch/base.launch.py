@@ -59,6 +59,11 @@ def generate_launch_description() -> LaunchDescription:
             description="The BlueROV2 Heavy localization configuration file.",
         ),
         DeclareLaunchArgument(
+            "ekf_file",
+            default_value="ekf.yaml",
+            description="The EKF configufation file."
+        ),
+        DeclareLaunchArgument(
             "manager_file",
             default_value="manager.yaml",
             description="The BlueROV2 Heavy manager configuration file.",
@@ -258,12 +263,19 @@ def generate_launch_description() -> LaunchDescription:
                 )
             ),
             launch_arguments={
-                "config_filepath": PathJoinSubstitution(
+                "localization_config_filepath": PathJoinSubstitution(
                     [
                         FindPackageShare(description_package),
                         "config",
                         configuration_type,
                         LaunchConfiguration("localization_file"),
+                    ]
+                ),
+                "ekf_config_filepath": PathJoinSubstitution(
+                    [
+                        FindPackageShare(description_package),
+                        "config",
+                        LaunchConfiguration("ekf_file"),
                     ]
                 ),
                 "localization_source": LaunchConfiguration("localization_source"),

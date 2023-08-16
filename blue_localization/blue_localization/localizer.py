@@ -27,7 +27,7 @@ import numpy as np
 import rclpy
 import tf2_geometry_msgs  # noqa
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Pose, PoseStamped, TransformStamped
+from geometry_msgs.msg import Pose, PoseStamped, TransformStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation as R
@@ -459,6 +459,8 @@ class GazeboLocalizer(Localizer):
             1,
         )
 
+        self.woo_pub = self.create_publisher(PoseWithCovarianceStamped, "/party", 1)
+
     def proxy_odom_cb(self, msg: Odometry) -> None:
         """Proxy the pose data from the Gazebo odometry ground-truth data.
 
@@ -473,6 +475,13 @@ class GazeboLocalizer(Localizer):
 
         # We only need the pose; we don't need the covariance
         pose.pose = msg.pose.pose
+
+        wooo = PoseWithCovarianceStamped()
+        wooo.header.frame_id = msg.header.frame_id
+        wooo.header.stamp = msg.header.stamp
+        wooo.pose = msg.pose
+
+        self.woo_pub.publish(wooo)
 
         self.localization_pub.publish(pose)
 
