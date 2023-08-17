@@ -19,8 +19,7 @@
 # THE SOFTWARE.
 
 from abc import ABC
-from collections import deque
-from typing import Any, Deque
+from typing import Any
 
 import cv2
 import numpy as np
@@ -30,6 +29,7 @@ from cv_bridge import CvBridge
 from geometry_msgs.msg import (
     PoseStamped,
     PoseWithCovarianceStamped,
+    TwistStamped,
     TwistWithCovarianceStamped,
 )
 from nav_msgs.msg import Odometry
@@ -44,12 +44,39 @@ from tf2_ros.transform_listener import TransformListener
 
 
 class Localizer(Node, ABC):
-    """Base class for implementing a localization interface."""
+    """Base class for implementing a localization interface.
+
+    The solution obtained from the localization platform can go to two places: the
+    ArduPilot EKF via the external vision interface and/or the Blue EKF which uses the
+    Charles River Analytics, Inc. nonlinear state estimation interface. Below are some
+    factors to consider when determining which interface to use:
+
+    When to use the ArduPilot EKF:
+        - When you only need a single external pose and/or velocity state provider
+        - When you need to use GUIDED mode (or the other autonomous flight modes)
+        - When working in simulation (there is less setup involved)
+        - When you are only using onboard sensors that already have direct integration
+          into ArduSub
+
+    When to use the Blue EKF:
+        - When you have more external state providers than ArduPilot provides interfaces
+          for
+        - When you want to integrate support for additional sensors (e.g., IMU)
+        - When you want more control over the EKF parameters
+        - When you want to use UKF (EKF is the default, but the state estimation
+          interface also supports UKF)
+        - When you don't want to fight 9 rounds in the octogon with ArduPilot and MAVROS
+          just to get state information to your controller/planner
+
+    As previously indicated, both estimators may be used at the same time, but the
+    controller should only read state information from one estimator.
+    """
 
     MAP_FRAME = "map"
     MAP_NED_FRAME = "map_ned"
     BASE_LINK_FRAME = "base_link"
     BASE_LINK_FRD_FRAME = "base_link_frd"
+    CAMERA_FRAME = "camera"
 
     def __init__(self, node_name: str) -> None:
         """Create a new localizer.
@@ -66,82 +93,163 @@ class Localizer(Node, ABC):
 
 
 class PoseLocalizer(Localizer):
-    """Interface for publishing pose states for localization purposes.
+    """Interface for publishing pose states.
 
     This is supported both by the Blue EKF and the ArduPilot EKF.
     """
 
     def __init__(self, node_name: str) -> None:
+        """Create a new pose localization interface.
+
+        Args:
+            node_name: The pose interface name.
+        """
         super().__init__(node_name)
 
-        # Poses published using the MAVROS vision pose interface
-        # go to the ArduPilot EKF. This works very well in simulation
-        # but has some issues when deployed on hardware.
+        self.declare_parameter("estimator", "ardusub")
+
+        self.estimator = (
+            self.get_parameter("estimator").get_parameter_value().string_value
+        )
+
+        if self.estimator not in ["ardusub", "blue", "both"]:
+            raise ValueError(f"Invalid estimator provided: {self.estimator}")
+
         self.vision_pose_pub = self.create_publisher(
             PoseStamped, "/mavros/vision_pose/pose", 1
         )
-
-        # Poses published to the external Blue EKF. This requires
-        # more advanced knowledge of the EKF algorithm, but provides
-        # a better interface for multiple custom pose sources (e.g.,
-        # barometer, SLAM, USBL, etc.)
-        self.robot_pose_pub = self.create_publisher(
-            PoseWithCovarianceStamped, f"/blue/ekf/pose/{node_name}/in"
+        self.vision_pose_cov_pub = self.create_publisher(
+            PoseWithCovarianceStamped, "/mavros/vision_pose/pose_cov", 1
         )
+        self.robot_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, f"/blue/ekf/pose/{node_name}/in", 1
+        )
+
+    def publish(self, pose: PoseStamped | PoseWithCovarianceStamped) -> None:
+        """Publish a pose message to the desired estimator.
+
+        This method is simply a wrapper for the state publishers to abstract away the
+        need to think about which state gets published where.
+
+        Args:
+            pose: The state message to send.
+        """
+        match self.estimator:
+            case "ardusub":
+                if isinstance(pose, PoseStamped):
+                    self.vision_pose_pub.publish(pose)
+                else:
+                    self.vision_pose_cov_pub.publish(pose)
+            case "blue":
+                self.robot_pose_pub.publish(pose)
+            case "both":
+                if isinstance(pose, PoseStamped):
+                    self.vision_pose_pub.publish(pose)
+                else:
+                    self.vision_pose_cov_pub.publish(pose)
+                self.robot_pose_pub.publish(pose)
 
 
 class TwistLocalizer(Localizer):
-    """Interface for publishing twist states for localization purposes.
+    """Interface for publishing twist states.
+
+    This is useful when integrating external velocity measurement sensors (e.g., a
+    DVL).
 
     This is supported both by the Blue EKF and the ArduPilot EKF.
     """
 
     def __init__(self, node_name: str) -> None:
+        """Create a new twist localization interface.
+
+        Args:
+            node_name: The name of the velocity localizer.
+        """
         super().__init__(node_name)
 
-        # Velocities published using the vision speed interface
-        # go to the ArduPilot EKF. This works very well in simulation
-        # but has some issues when deployed on hardware.
-        self.vision_speed_pub = self.create_publisher(
-            TwistWithCovarianceStamped, "/mavros/vision_speed/speed", 1
+        self.declare_parameter("estimator", "ardusub")
+
+        self.estimator = (
+            self.get_parameter("estimator").get_parameter_value().string_value
         )
 
-        # Velocities published to the external Blue EKF. This requires
-        # more advanced knowledge of the EKF algorithm, but provides
-        # a better interface for multiple custom twist sources.
-        self.robot_twist_pub = self.create_publisher(
-            TwistWithCovarianceStamped, f"/blue/ekf/twist/{node_name}/in"
+        if self.estimator not in ["ardusub", "blue", "both"]:
+            raise ValueError(f"Invalid estimator provided: {self.estimator}")
+
+        self.vision_speed_pub = self.create_publisher(
+            TwistStamped, "/mavros/vision_speed/speed", 1
         )
+        self.vision_speed_cov_pub = self.create_publisher(
+            TwistWithCovarianceStamped, "/mavros/vision_speed/speed_cov", 1
+        )
+        self.robot_twist_pub = self.create_publisher(
+            TwistWithCovarianceStamped, f"/blue/ekf/twist/{node_name}/in", 1
+        )
+
+    def publish(self, twist: TwistStamped | TwistWithCovarianceStamped) -> None:
+        """Publish a twist message to the desired estimator.
+
+        This method is simply a wrapper for the state publishers to abstract away the
+        need to think about which state gets published where.
+
+        Args:
+            twist: The state message to send.
+        """
+        match self.estimator:
+            case "ardusub":
+                if isinstance(twist, TwistStamped):
+                    self.vision_speed_pub.publish(twist)
+                else:
+                    self.vision_speed_cov_pub.publish(twist)
+            case "blue":
+                self.robot_twist_pub.publish(twist)
+            case "both":
+                if isinstance(twist, TwistStamped):
+                    self.robot_twist_pub.publish(twist)
+                else:
+                    self.vision_speed_cov_pub.publish(twist)
+                self.robot_twist_pub.publish(twist)
 
 
 class ImuLocalizer(Localizer):
-    """Interface for publishing IMU readings for localization purposes.
+    """Interface for publishing IMU readings.
+
+    The IMU localization framework primarily targets platforms with multiple IMU
+    sensors that need to be fused together.
 
     This is supported only by the Blue localization framework.
     """
 
     def __init__(self, node_name: str) -> None:
+        """Create a new IMU localizer.
+
+        Args:
+            node_name: The name of the IMU localizer.
+        """
         super().__init__(node_name)
 
-        # IMU published to the external Blue EKF. This requires
-        # more advanced knowledge of the EKF algorithm, but provides
-        # a better interface for multiple custom IMU sources.
+        # IMU published to the external Blue EKF.
         self.robot_twist_pub = self.create_publisher(
-            Imu, f"/blue/ekf/imu/{node_name}/in"
+            Imu, f"/blue/ekf/imu/{node_name}/in", 1
         )
 
 
 class OdometryLocalizer(Localizer):
-    """Interface for publishing odometry readings for localization purposes.
+    """Interface for publishing odometry measurements.
 
-    This is supported both by the Blue EKF and the ArduPilot EKF.
+    This is only supported by the Blue EKF.
     """
 
     def __init__(self, node_name: str) -> None:
+        """Create a new odometry localization interface.
+
+        Args:
+            node_name: The name of the odometry localizer.
+        """
         super().__init__(node_name)
 
         self.robot_odom_pub = self.create_publisher(
-            Odometry, f"/blue/ekf/odom/{node_name}/in"
+            Odometry, f"/blue/ekf/odom/{node_name}/in", 1
         )
 
 
@@ -174,9 +282,10 @@ class ArucoMarkerLocalizer(PoseLocalizer):
 
         self.bridge = CvBridge()
 
-        self.declare_parameter("camera_matrix", [0.0 for _ in range(9)])
-        self.declare_parameter("projection_matrix", [0.0 for _ in range(12)])
-        self.declare_parameter("distortion_coefficients", [0.0 for _ in range(5)])
+        self.declare_parameter("camera_matrix", list(np.zeros(9)))
+        self.declare_parameter("projection_matrix", list(np.zeros(12)))
+        self.declare_parameter("distortion_coefficients", list(np.zeros(5)))
+        self.declare_parameter("covariance", list(np.zeros(36)))
 
         # Get the camera intrinsics
         self.camera_matrix = np.array(
@@ -200,8 +309,12 @@ class ArucoMarkerLocalizer(PoseLocalizer):
             np.float32,
         ).reshape(1, 5)
 
+        self.covariance = np.array(
+            self.get_parameter("covariance").get_parameter_value().double_array_value
+        ).reshape((6, 6))
+
         self.camera_sub = self.create_subscription(
-            Image, "/blue/camera", self.extract_and_publish_pose_cb, 1
+            Image, "/camera", self.extract_and_publish_pose_cb, 1
         )
 
     def detect_markers(self, frame: np.ndarray) -> tuple[Any, Any] | None:
@@ -299,29 +412,29 @@ class ArucoMarkerLocalizer(PoseLocalizer):
         rot_vec, trans_vec, marker_id = camera_pose
 
         # Convert the pose into a PoseStamped message
-        pose = PoseStamped()
+        pose_cov = PoseWithCovarianceStamped()
 
-        pose.header.frame_id = f"marker_{marker_id}"
-        pose.header.stamp = self.get_clock().now().to_msg()
+        pose_cov.header.frame_id = f"marker_{marker_id}"
+        pose_cov.header.stamp = self.get_clock().now().to_msg()
 
         (
-            pose.pose.position.x,
-            pose.pose.position.y,
-            pose.pose.position.z,
+            pose_cov.pose.pose.position.x,
+            pose_cov.pose.pose.position.y,
+            pose_cov.pose.pose.position.z,
         ) = trans_vec.squeeze()
 
         rot_mat, _ = cv2.Rodrigues(rot_vec)
 
         (
-            pose.pose.orientation.x,
-            pose.pose.orientation.y,
-            pose.pose.orientation.z,
-            pose.pose.orientation.w,
+            pose_cov.pose.pose.orientation.x,
+            pose_cov.pose.pose.orientation.y,
+            pose_cov.pose.pose.orientation.z,
+            pose_cov.pose.pose.orientation.w,
         ) = R.from_matrix(rot_mat).as_quat()
 
         # Transform the pose from the `marker` frame to the `map` frame
         try:
-            pose = self.tf_buffer.transform(pose, "map")
+            pose_cov = self.tf_buffer.transform(pose_cov, self.MAP_FRAME)
         except TransformException as e:
             self.get_logger().warning(
                 f"Could not transform from frame marker_{marker_id} to map: {e}"
@@ -335,7 +448,7 @@ class ArucoMarkerLocalizer(PoseLocalizer):
         # Start by getting the camera to base_link transform
         try:
             tf_camera_to_base = self.tf_buffer.lookup_transform(
-                "camera_link", "base_link", Time()
+                self.CAMERA_FRAME, self.BASE_LINK_FRAME, Time()
             )
         except TransformException as e:
             self.get_logger().warning(f"Could not access transform: {e}")
@@ -363,17 +476,17 @@ class ArucoMarkerLocalizer(PoseLocalizer):
         tf_map_to_camera_mat = np.eye(4)
         tf_map_to_camera_mat[:3, :3] = R.from_quat(
             [
-                pose.pose.orientation.x,  # type: ignore
-                pose.pose.orientation.y,  # type: ignore
-                pose.pose.orientation.z,  # type: ignore
-                pose.pose.orientation.w,  # type: ignore
+                pose_cov.pose.orientation.x,  # type: ignore
+                pose_cov.pose.orientation.y,  # type: ignore
+                pose_cov.pose.orientation.z,  # type: ignore
+                pose_cov.pose.orientation.w,  # type: ignore
             ]
         ).as_matrix()
         tf_map_to_camera_mat[:3, 3] = np.array(
             [
-                pose.pose.position.x,  # type: ignore
-                pose.pose.position.y,  # type: ignore
-                pose.pose.position.z,  # type: ignore
+                pose_cov.pose.position.x,  # type: ignore
+                pose_cov.pose.position.y,  # type: ignore
+                pose_cov.pose.position.z,  # type: ignore
             ]
         )
 
@@ -382,19 +495,19 @@ class ArucoMarkerLocalizer(PoseLocalizer):
 
         # Update the pose using the new transform
         (
-            pose.pose.position.x,  # type: ignore
-            pose.pose.position.y,  # type: ignore
-            pose.pose.position.z,  # type: ignore
+            pose_cov.pose.position.x,  # type: ignore
+            pose_cov.pose.position.y,  # type: ignore
+            pose_cov.pose.position.z,  # type: ignore
         ) = tf_map_to_base_mat[3:, 3]
 
         (
-            pose.pose.orientation.x,  # type: ignore
-            pose.pose.orientation.y,  # type: ignore
-            pose.pose.orientation.z,  # type: ignore
-            pose.pose.orientation.w,  # type: ignore
+            pose_cov.pose.orientation.x,  # type: ignore
+            pose_cov.pose.orientation.y,  # type: ignore
+            pose_cov.pose.orientation.z,  # type: ignore
+            pose_cov.pose.orientation.w,  # type: ignore
         ) = R.from_matrix(tf_map_to_base_mat[:3, :3]).as_quat()
 
-        self.vision_pose_pub.publish(pose)
+        self.publish(pose_cov)  # type: ignore
 
 
 class QualisysLocalizer(PoseLocalizer):
@@ -407,9 +520,6 @@ class QualisysLocalizer(PoseLocalizer):
         self.declare_parameter("body", "bluerov")
 
         body = self.get_parameter("body").get_parameter_value().string_value
-        filter_len = (
-            self.get_parameter("filter_len").get_parameter_value().integer_value
-        )
 
         self.mocap_sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -418,41 +528,61 @@ class QualisysLocalizer(PoseLocalizer):
             1,
         )
 
-        # Store the pose information in a buffer and apply an LWMA filter to it
-        self.pose_buffer: Deque[np.ndarray] = deque(maxlen=filter_len)
+    @staticmethod
+    def check_isnan(pose_cov: PoseWithCovarianceStamped) -> bool:
+        """Check if a pose message has NaN values.
 
-    def proxy_pose_cb(self, pose: PoseWithCovarianceStamped) -> None:
-        """Proxy the pose to the ArduSub EKF.
+        NaN values are not uncommon when dealing with MoCap data.
 
         Args:
-            pose: The pose of the BlueROV2 identified by the motion capture system.
-        """
-        # Check if any of the values in the array are NaN; if they are, then
-        # discard the reading
-        if np.isnan(
-            np.min(
-                np.array(
-                    [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
-                )
-            )
-        ):
-            return
+            pose: The message to check for NaN values.
 
+        Returns:
+            Whether or not the message has any NaN values.
+        """
+        # Check the position
         if np.isnan(
             np.min(
                 np.array(
                     [
-                        pose.pose.orientation.x,
-                        pose.pose.orientation.y,
-                        pose.pose.orientation.z,
-                        pose.pose.orientation.w,
+                        pose_cov.pose.pose.position.x,
+                        pose_cov.pose.pose.position.y,
+                        pose_cov.pose.pose.position.z,
                     ]
                 )
             )
         ):
+            return False
+
+        # Check the orientation
+        if np.isnan(
+            np.min(
+                np.array(
+                    [
+                        pose_cov.pose.pose.orientation.x,
+                        pose_cov.pose.pose.orientation.y,
+                        pose_cov.pose.pose.orientation.z,
+                        pose_cov.pose.pose.orientation.w,
+                    ]
+                )
+            )
+        ):
+            return False
+
+        return True
+
+    def proxy_pose_cb(self, pose_cov: PoseWithCovarianceStamped) -> None:
+        """Proxy the pose to the ArduSub EKF.
+
+        Args:
+            pose_cov: The pose of the BlueROV2 identified by the motion capture system.
+        """
+        # Check if any of the values in the array are NaN; if they are, then
+        # discard the reading
+        if not self.check_isnan(pose_cov):
             return
 
-        self.robot_pose_pub.publish(pose)
+        self.robot_pose_pub.publish(pose_cov)
 
 
 class GazeboLocalizer(PoseLocalizer):
@@ -480,53 +610,67 @@ class GazeboLocalizer(PoseLocalizer):
         Args:
             odom: The Gazebo ground-truth odometry for the BlueROV2.
         """
-        pose = PoseStamped()
-
-        # Pose is provided in the parent header frame
-        pose.header.frame_id = odom.header.frame_id
-        pose.header.stamp = odom.header.stamp
-
-        pose.pose = odom.pose.pose
-        self.vision_pose_pub.publish(pose)
-
         pose_cov = PoseWithCovarianceStamped()
         pose_cov.header.frame_id = odom.header.frame_id
         pose_cov.header.stamp = odom.header.stamp
         pose_cov.pose = odom.pose
 
-        self.robot_odom_pub.publish(pose_cov)
+        self.publish(pose_cov)
 
 
 class Bar30Localizer(PoseLocalizer):
     """Interface for localizing the vehicle using the Blue Robotics Bar30 sensor."""
 
     def __init__(self) -> None:
+        """Create a new localizer for the Bar30 sensor."""
         super().__init__("bar30_localizer")
 
-        self.declare_parameters("water_density", 998.0)  # kg / m^3
-        self.declare_parameters("atmospheric_pressure", 101100.0)  # Pa
+        self.declare_parameter("water_density", 998.0)  # kg / m^3
+        self.declare_parameter("atmospheric_pressure", 101100.0)  # Pa
+
+        water_density = (
+            self.get_parameter("water_density").get_parameter_value().double_value
+        )
+        atmospheric_pressure = (
+            self.get_parameter("atmospheric_pressure")
+            .get_parameter_value()
+            .double_value
+        )
 
         # Subscribe to topic for getting barometer reading
         self.create_subscription(
             FluidPressure,
             "/blue/bar30/pressure",
-            lambda msg: self.calculate_depth_cb(pressure=msg, water_density=self.get_parameter("water_density").get_parameter_value().double_value, atmospheric_pressure=self.get_parameter("atmospheric_pressure").get_parameter_value().double_value),
+            lambda msg: self.calculate_and_publish_depth_cb(
+                pressure=msg,  # type: ignore
+                water_density=water_density,
+                atmospheric_pressure=atmospheric_pressure,
+            ),
             qos_profile_sensor_data,
         )
 
-    def calculate_depth_cb(self, pressure: FluidPressure, water_density: float, atmospheric_pressure: float) -> None:
+    def calculate_and_publish_depth_cb(
+        self, pressure: FluidPressure, water_density: float, atmospheric_pressure: float
+    ) -> None:
+        """Calculate the current depth from the pressure sensor and publish.
+
+        Args:
+            pressure: The current pressure reading.
+            water_density: The density of the fluid that the vehicle is submerged in.
+            atmospheric_pressure: The current atmospheric pressure.
+        """
         depth = pressure.fluid_pressure - atmospheric_pressure
         depth /= water_density * 9.85
 
-        pose = PoseWithCovarianceStamped()
-        pose.header = pressure.header
-        pose.pose.pose.position.z = depth
+        pose_cov = PoseWithCovarianceStamped()
+        pose_cov.header = pressure.header
+        pose_cov.pose.pose.position.z = depth
 
         # Measurements were evaluated
         cov = np.zeros((6, 6))
         cov[3, 3] = 0.2
 
-        self.robot_pose_pub(pose)
+        self.publish(pose_cov)
 
 
 def main_aruco(args: list[str] | None = None):
@@ -545,6 +689,17 @@ def main_qualisys(args: list[str] | None = None):
     rclpy.init(args=args)
 
     node = QualisysLocalizer()
+    rclpy.spin(node)
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+def main_bar30(args: list[str] | None = None):
+    """Run the Bar30 localizer."""
+    rclpy.init(args=args)
+
+    node = Bar30Localizer()
     rclpy.spin(node)
 
     node.destroy_node()

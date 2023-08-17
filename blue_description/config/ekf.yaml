@@ -2,26 +2,14 @@ ekf_filter_node:
     ros__parameters:
         frequency: 100.0
         sensor_timeout: 0.1
-        transform_time_offset: 0.05
         print_diagnostics: false
         publish_tf: true
         world_frame: map
         odom_frame: map
         base_link_frame: base_link
 
-        # pose0: /blue/ekf/qualisys_localizer/in
-        # pose0_config: [true,  true,  false,
-        #                true,  true,  true,
-        #                false, false, false,
-        #                false, false, false,
-        #                false, false, false]
-        # pose0_differential: true
-        # pose0_relative: false
-        # pose0_queue_size: 5
-        # pose0_rejection_threshold: 2.0
-
         pose0: /blue/ekf/gazebo_localizer/in
-        pose0_config: [true,  true,  false,
+        pose0_config: [true,  true,  true,
                        true,  true,  true,
                        false, false, false,
                        false, false, false,
@@ -31,24 +19,12 @@ ekf_filter_node:
         pose0_queue_size: 5
         pose0_rejection_threshold: 2.0
 
-        pose1: /blue/ekf/barometer_localizer/in
-        pose1_config: [false, false, true,
-                       false, false, false,
-                       false, false, false,
-                       false, false, false,
-                       false, false, false]
-        pose1_differential: true
-        pose1_relative: false
-        pose1_queue_size: 5
-        pose1_rejection_threshold: 2.0
-
         imu0: /mavros/imu/data
         imu0_config: [false, false, false,
                       true,  true,  true,
                       false, false, false,
                       true,  true,  true,
                       true,  true,  true]
-        imu0_differential: true
         imu0_relative: true
         imu0_queue_size: 5
         imu0_pose_rejection_threshold: 0.8

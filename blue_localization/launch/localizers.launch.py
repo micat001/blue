@@ -27,6 +27,7 @@ from launch.substitutions import (
     PathJoinSubstitution,
     PythonExpression,
 )
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -38,29 +39,9 @@ def generate_launch_description() -> LaunchDescription:
     """
     args = [
         DeclareLaunchArgument(
-            "localization_config_filepath",
+            "config_filepath",
             default_value=None,
             description="The path to the localization configuration YAML file.",
-        ),
-        DeclareLaunchArgument(
-            "ekf_config_filepath",
-            default_value=None,
-            description="The path to the EKF configuration YAML file.",
-        ),
-        DeclareLaunchArgument(
-            "estimator",
-            default_value="ardusub_ekf",
-            choices=["ardusub_ekf", "blue_ekf", "all"],
-            description="The state estimator to use for localization.",
-        ),
-        DeclareLaunchArgument(
-            "sources",
-            default_value="['qualisys_mocap']",
-            description=(
-                "The localization sources to stream from. Multiple sources can"
-                " be loaded at once. If no sources need to be launched, then this can"
-                " be set to an empty list."
-            ),
         ),
         DeclareLaunchArgument(
             "localizers",
@@ -74,7 +55,70 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "use_sim_time",
             default_value="false",
-            description=("Use the simulated Gazebo clock."),
+            description="Use the simulated Gazebo clock.",
+        ),
+    ]
+
+    localizers = LaunchConfiguration("localizers")
+    use_sim_time = LaunchConfiguration("use_sim_time")
+
+    nodes = [
+        Node(
+            package="blue_localization",
+            executable="aruco_marker_localizer",
+            name="aruco_marker_localizer",
+            output="screen",
+            parameters=[
+                LaunchConfiguration("config_filepath"),
+                {"use_sim_time": use_sim_time},
+            ],
+            condition=IfCondition(
+                PythonExpression(
+                    [
+                        "'aruco_marker_localizer' in ",
+                        localizers,
+                    ]
+                )
+            ),
+        ),
+        Node(
+            package="blue_localization",
+            executable="qualisys_localizer",
+            name="qualisys_localizer",
+            output="screen",
+            parameters=[
+                LaunchConfiguration("config_filepath"),
+                {"use_sim_time": use_sim_time},
+            ],
+            condition=IfCondition(
+                PythonExpression(["'qualisys_localizer' in ", localizers])
+            ),
+        ),
+        Node(
+            package="blue_localization",
+            executable="gazebo_localizer",
+            name="gazebo_localizer",
+            output="screen",
+            parameters=[
+                LaunchConfiguration("config_filepath"),
+                {"use_sim_time": use_sim_time},
+            ],
+            condition=IfCondition(
+                PythonExpression(["'gazebo_localizer' in ", localizers])
+            ),
+        ),
+        Node(
+            package="blue_localization",
+            executable="bar30_localizer",
+            name="bar30_localizer",
+            output="screen",
+            parameters=[
+                LaunchConfiguration("config_filepath"),
+                {"use_sim_time": use_sim_time},
+            ],
+            condition=IfCondition(
+                PythonExpression(["'bar30_localizer' in ", localizers])
+            ),
         ),
     ]
 
@@ -82,41 +126,13 @@ def generate_launch_description() -> LaunchDescription:
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution(
-                    [FindPackageShare("blue_localization"), "ekf.launch.py"]
+                    [FindPackageShare("blue_localization"), "markers.launch.py"]
                 )
             ),
-            launch_arguments={
-                "config_filepath": LaunchConfiguration("ekf_config_filepath"),
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }.items(),
             condition=IfCondition(
-                PythonExpression(
-                    ["'", LaunchConfiguration("estimator"), "' in ['all', 'blue_ekf']"]
-                )
+                PythonExpression(["'aruco_marker_localizer' in", localizers])
             ),
-        ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution(
-                    [FindPackageShare("blue_localization"), "sources.launch.py"]
-                )
-            ),
-            launch_arguments={
-                "config_filepath": LaunchConfiguration("localization_config_filepath"),
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }.items(),
-        ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution(
-                    [FindPackageShare("blue_localization"), "localizers.launch.py"]
-                )
-            ),
-            launch_arguments={
-                "config_filepath": LaunchConfiguration("localization_config_filepath"),
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }.items(),
         ),
     ]
 
-    return LaunchDescription(args + includes)
+    return LaunchDescription(args + nodes + includes)

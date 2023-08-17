@@ -42,7 +42,11 @@ from gi.repository import Gst  # noqa # type: ignore
 
 
 class Source(Node, ABC):
-    """Base class for a localization source (e.g., camera, sonar, etc.)."""
+    """Base class for a localization source.
+
+    This interface is typically used to provide a ROS interface for an external sensor
+    (e.g., DVL, USBL, etc.).
+    """
 
     def __init__(self, node_name: str) -> None:
         """Create a new localization source.
@@ -70,7 +74,7 @@ class Camera(Source):
 
         self.declare_parameter("port", 5600)
 
-        self.camera_frame_pub = self.create_publisher(Image, "/blue/camera", 1)
+        self.camera_frame_pub = self.create_publisher(Image, "/camera", 1)
 
         # Start the GStreamer stream
         self.video_pipe, self.video_sink = self.init_stream(
@@ -158,12 +162,16 @@ class QualisysMotionCapture(Source):
         self.declare_parameter("port", 22223)
         self.declare_parameter("version", "1.22")
         self.declare_parameter("body", "ROV")
+        self.declare_parameter("covariance", list(np.zeros(36)))
 
         # Load the parameters
         self.ip = self.get_parameter("ip").get_parameter_value().string_value
         self.port = self.get_parameter("port").get_parameter_value().integer_value
         self.version = self.get_parameter("version").get_parameter_value().string_value
         self.body = self.get_parameter("body").get_parameter_value().string_value
+        self.covariance = np.array(
+            self.get_parameter("covariance").get_parameter_value().double_array_value
+        ).reshape((6, 6))
 
         # Publish the pose using the name of the body as the topic
         self.mocap_pub = self.create_publisher(
@@ -233,10 +241,9 @@ class QualisysMotionCapture(Source):
             pose_msg.header.frame_id = "map"
             pose_msg.header.stamp = self.get_clock().now().to_msg()
 
-            # Set the covariance to 80%
             # This is just a rough estimate from observation and is
             # subject to change according to your calibration accuracy.
-            pose_msg.pose.covariance = np.eye(6) @ np.full((1, 6), 0.8)
+            pose_msg.pose.covariance = self.covariance
 
             # Convert from mm to m and save the position to the message
             (
@@ -260,12 +267,15 @@ class QualisysMotionCapture(Source):
 
 
 class Bar30DepthSensor(Source):
-    """Interface for streaming the Bar30 pressure readings."""
+    """Interface for streaming pressure measurements from the Bar30 sensor."""
 
     def __init__(self) -> None:
+        """Create a new Bar30 interface."""
         super().__init__("bar30")
 
-        # Get the UAS url to subscribe to the
+        # Get the UAS url to subscribe to
+        # This should typically be `uas1`, but may change with more than one system
+        # on the network
         self.declare_parameter("uas_url", "uas1")
 
         self.set_message_rates_client = self.create_client(
@@ -290,12 +300,24 @@ class Bar30DepthSensor(Source):
             Mavlink, f"{uas_url}/mavlink_source", self.proxy_pressure_cb, 1
         )
 
-        self.pressure_pub = self.create_publisher(FluidPressure, "/blue/bar30/pressure", qos_profile_sensor_data)
+        self.pressure_pub = self.create_publisher(
+            FluidPressure, "/blue/bar30/pressure", qos_profile_sensor_data
+        )
 
     def proxy_pressure_cb(self, msg: Mavlink) -> None:
+        """Convert the pressure readings to a FluidPressure and republish.
+
+        The inspiration for this method comes from the following source:
+        https://discuss.bluerobotics.com/t/ros-support-for-bluerov2/1550/26
+
+        Args:
+            msg: A MAVLink message coming from the uas FCU.
+        """
         if msg.msgid == 137:
             p = struct.pack("QQ", *msg.payload64)
-            time_boot_ms, press_abs, press_diff, temperature = struct.unpack("Iffhxx", p)
+            time_boot_ms, press_abs, press_diff, temperature = struct.unpack(
+                "Iffhxx", p
+            )
 
             pressure = FluidPressure()
             pressure.header = msg.header
@@ -321,6 +343,17 @@ def main_camera(args: list[str] | None = None):
     rclpy.init(args=args)
 
     node = Camera()
+    rclpy.spin(node)
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+def main_bar30(args: list[str] | None = None):
+    """Run the Bar30 source."""
+    rclpy.init(args=args)
+
+    node = Bar30DepthSensor()
     rclpy.spin(node)
 
     node.destroy_node()

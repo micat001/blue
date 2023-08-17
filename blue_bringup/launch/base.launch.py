@@ -61,7 +61,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "ekf_file",
             default_value="ekf.yaml",
-            description="The EKF configufation file."
+            description="The EKF configufation file.",
         ),
         DeclareLaunchArgument(
             "manager_file",
@@ -96,25 +96,27 @@ def generate_launch_description() -> LaunchDescription:
             choices=["ismc"],
         ),
         DeclareLaunchArgument(
-            "localization_source",
-            default_value="gazebo",
-            choices=["mocap", "camera", "gazebo"],
-            description="The localization source to stream from.",
+            "estimator",
+            default_value="ardusub_ekf",
+            choices=["ardusub_ekf", "blue_ekf", "all"],
+            description="The state estimator to use for localization.",
         ),
         DeclareLaunchArgument(
-            "use_camera",
-            default_value="false",
+            "sources",
+            default_value="[]",
             description=(
-                "Launch the BlueROV2 camera stream. This is automatically set to true"
-                " when using the camera for localization."
+                "The localization sources to stream from. Multiple sources can"
+                " be loaded at once. If no sources need to be launched, then this can"
+                " be set to an empty list."
             ),
         ),
         DeclareLaunchArgument(
-            "use_mocap",
-            default_value="false",
+            "localizers",
+            default_value="['gazebo_localizer']",
             description=(
-                "Launch the Qualisys motion capture stream. This is automatically"
-                " set to true when using the motion capture system for localization."
+                "The localizers to collect state information from. Multiple"
+                " localizers can be loaded at once. If no localizers need to be"
+                " launched, then this can be set to an empty list."
             ),
         ),
         DeclareLaunchArgument(
@@ -278,9 +280,8 @@ def generate_launch_description() -> LaunchDescription:
                         LaunchConfiguration("ekf_file"),
                     ]
                 ),
-                "localization_source": LaunchConfiguration("localization_source"),
-                "use_mocap": LaunchConfiguration("use_mocap"),
-                "use_camera": LaunchConfiguration("use_camera"),
+                "sources": LaunchConfiguration("sources"),
+                "localizers": LaunchConfiguration("localizers"),
                 "use_sim_time": use_sim,
             }.items(),
         ),
