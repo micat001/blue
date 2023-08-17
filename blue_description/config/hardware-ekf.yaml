@@ -9,18 +9,7 @@ ekf_filter_node:
         odom_frame: map
         base_link_frame: base_link
 
-        # pose0: /blue/ekf/qualisys_localizer/in
-        # pose0_config: [true,  true,  false,
-        #                true,  true,  true,
-        #                false, false, false,
-        #                false, false, false,
-        #                false, false, false]
-        # pose0_differential: true
-        # pose0_relative: false
-        # pose0_queue_size: 5
-        # pose0_rejection_threshold: 2.0
-
-        pose0: /blue/ekf/gazebo_localizer/in
+        pose0: /blue/ekf/qualisys_localizer/in
         pose0_config: [true,  true,  false,
                        true,  true,  true,
                        false, false, false,

@@ -186,8 +186,8 @@ def generate_launch_description() -> LaunchDescription:
             launch_arguments={
                 "config_filepath": LaunchConfiguration("ekf_config_filepath"),
                 "use_sim_time": use_sim_time,
-            }.items()
-        )
+            }.items(),
+        ),
     ]
 
     return LaunchDescription(args + nodes + includes)

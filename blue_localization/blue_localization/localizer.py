@@ -27,11 +27,16 @@ import numpy as np
 import rclpy
 import tf2_geometry_msgs  # noqa
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Pose, PoseStamped, TransformStamped, PoseWithCovarianceStamped
+from geometry_msgs.msg import (
+    PoseStamped,
+    PoseWithCovarianceStamped,
+    TwistWithCovarianceStamped,
+)
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from scipy.spatial.transform import Rotation as R
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import FluidPressure, Image, Imu
 from tf2_ros import TransformException  # type: ignore
 from tf2_ros import Time
 from tf2_ros.buffer import Buffer
@@ -39,7 +44,7 @@ from tf2_ros.transform_listener import TransformListener
 
 
 class Localizer(Node, ABC):
-    """Base class for implementing a visual localization interface."""
+    """Base class for implementing a localization interface."""
 
     MAP_FRAME = "map"
     MAP_NED_FRAME = "map_ned"
@@ -59,46 +64,88 @@ class Localizer(Node, ABC):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Poses are sent to the ArduPilot EKF
-        self.localization_pub = self.create_publisher(
+
+class PoseLocalizer(Localizer):
+    """Interface for publishing pose states for localization purposes.
+
+    This is supported both by the Blue EKF and the ArduPilot EKF.
+    """
+
+    def __init__(self, node_name: str) -> None:
+        super().__init__(node_name)
+
+        # Poses published using the MAVROS vision pose interface
+        # go to the ArduPilot EKF. This works very well in simulation
+        # but has some issues when deployed on hardware.
+        self.vision_pose_pub = self.create_publisher(
             PoseStamped, "/mavros/vision_pose/pose", 1
         )
-        self.odometry_pub = self.create_publisher(Odometry, "/mavros/odometry/out", 1)
 
-    @staticmethod
-    def convert_pose_to_transform(
-        node: Node, pose: Pose, reference_frame: str, child_frame: str
-    ) -> TransformStamped:
-        """Convert a Pose message into a TransformStamped.
-
-        Args:
-            node: The ROS 2 node that is calling the method.
-            pose: The Pose message to convert into a TransformStamped message.
-            reference_frame: The frame that the TransformStamped transforms from.
-            child_frame: The frame that the TrasnformStamped transforms to.
-
-        Returns:
-            The converted TransformStamped message.
-        """
-        tf = TransformStamped()
-
-        tf.header.stamp = node.get_clock().now().to_msg()
-        tf.header.frame_id = reference_frame
-        tf.child_frame_id = child_frame
-
-        tf.transform.translation.x = pose.position.x
-        tf.transform.translation.y = pose.position.y
-        tf.transform.translation.z = pose.position.z
-
-        tf.transform.rotation.x = pose.orientation.x
-        tf.transform.rotation.y = pose.orientation.y
-        tf.transform.rotation.z = pose.orientation.z
-        tf.transform.rotation.w = pose.orientation.w
-
-        return tf
+        # Poses published to the external Blue EKF. This requires
+        # more advanced knowledge of the EKF algorithm, but provides
+        # a better interface for multiple custom pose sources (e.g.,
+        # barometer, SLAM, USBL, etc.)
+        self.robot_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, f"/blue/ekf/pose/{node_name}/in"
+        )
 
 
-class ArucoMarkerLocalizer(Localizer):
+class TwistLocalizer(Localizer):
+    """Interface for publishing twist states for localization purposes.
+
+    This is supported both by the Blue EKF and the ArduPilot EKF.
+    """
+
+    def __init__(self, node_name: str) -> None:
+        super().__init__(node_name)
+
+        # Velocities published using the vision speed interface
+        # go to the ArduPilot EKF. This works very well in simulation
+        # but has some issues when deployed on hardware.
+        self.vision_speed_pub = self.create_publisher(
+            TwistWithCovarianceStamped, "/mavros/vision_speed/speed", 1
+        )
+
+        # Velocities published to the external Blue EKF. This requires
+        # more advanced knowledge of the EKF algorithm, but provides
+        # a better interface for multiple custom twist sources.
+        self.robot_twist_pub = self.create_publisher(
+            TwistWithCovarianceStamped, f"/blue/ekf/twist/{node_name}/in"
+        )
+
+
+class ImuLocalizer(Localizer):
+    """Interface for publishing IMU readings for localization purposes.
+
+    This is supported only by the Blue localization framework.
+    """
+
+    def __init__(self, node_name: str) -> None:
+        super().__init__(node_name)
+
+        # IMU published to the external Blue EKF. This requires
+        # more advanced knowledge of the EKF algorithm, but provides
+        # a better interface for multiple custom IMU sources.
+        self.robot_twist_pub = self.create_publisher(
+            Imu, f"/blue/ekf/imu/{node_name}/in"
+        )
+
+
+class OdometryLocalizer(Localizer):
+    """Interface for publishing odometry readings for localization purposes.
+
+    This is supported both by the Blue EKF and the ArduPilot EKF.
+    """
+
+    def __init__(self, node_name: str) -> None:
+        super().__init__(node_name)
+
+        self.robot_odom_pub = self.create_publisher(
+            Odometry, f"/blue/ekf/odom/{node_name}/in"
+        )
+
+
+class ArucoMarkerLocalizer(PoseLocalizer):
     """Performs localization using ArUco markers."""
 
     ARUCO_MARKER_TYPES = [
@@ -347,10 +394,10 @@ class ArucoMarkerLocalizer(Localizer):
             pose.pose.orientation.w,  # type: ignore
         ) = R.from_matrix(tf_map_to_base_mat[:3, :3]).as_quat()
 
-        self.localization_pub.publish(pose)
+        self.vision_pose_pub.publish(pose)
 
 
-class QualisysLocalizer(Localizer):
+class QualisysLocalizer(PoseLocalizer):
     """Localize the BlueROV2 using the Qualisys motion capture system."""
 
     def __init__(self) -> None:
@@ -358,7 +405,6 @@ class QualisysLocalizer(Localizer):
         super().__init__("qualisys_localizer")
 
         self.declare_parameter("body", "bluerov")
-        self.declare_parameter("filter_len", 20)
 
         body = self.get_parameter("body").get_parameter_value().string_value
         filter_len = (
@@ -366,82 +412,50 @@ class QualisysLocalizer(Localizer):
         )
 
         self.mocap_sub = self.create_subscription(
-            PoseStamped, f"/blue/mocap/qualisys/{body}", self.proxy_pose_cb, 1
+            PoseWithCovarianceStamped,
+            f"/blue/mocap/qualisys/{body}",
+            self.proxy_pose_cb,
+            1,
         )
 
         # Store the pose information in a buffer and apply an LWMA filter to it
         self.pose_buffer: Deque[np.ndarray] = deque(maxlen=filter_len)
 
-    def proxy_pose_cb(self, pose: PoseStamped) -> None:
+    def proxy_pose_cb(self, pose: PoseWithCovarianceStamped) -> None:
         """Proxy the pose to the ArduSub EKF.
-
-        We need to do some filtering here to handle the noise from the measurements.
-        The filter that we apply in this case is the LWMA filter.
 
         Args:
             pose: The pose of the BlueROV2 identified by the motion capture system.
         """
-
-        def pose_to_array(pose: Pose) -> np.ndarray:
-            ar = np.zeros(6)
-            ar[:3] = [pose.position.x, pose.position.y, pose.position.z]
-            ar[3:] = R.from_quat(
-                [
-                    pose.orientation.x,
-                    pose.orientation.y,
-                    pose.orientation.z,
-                    pose.orientation.w,
-                ]
-            ).as_euler("xyz")
-
-            return ar
-
-        # Convert the pose message into an array for filtering
-        pose_ar = pose_to_array(pose.pose)
-
         # Check if any of the values in the array are NaN; if they are, then
-        # don't publish the state
-        if np.isnan(np.min(pose_ar)):
-            return
-
-        # Add the pose to the circular buffer
-        self.pose_buffer.append(pose_ar)
-
-        # Wait until our buffer is full to start publishing the state information
-        if len(self.pose_buffer) < self.pose_buffer.maxlen:  # type: ignore
-            return
-
-        def lwma(measurements: np.ndarray) -> np.ndarray:
-            # Get the linear weights
-            weights = np.arange(len(measurements)) + 1
-            return np.array(
-                [
-                    np.sum(np.prod(np.vstack((axis, weights)), axis=0))
-                    / np.sum(weights)
-                    for axis in measurements.T
-                ]
+        # discard the reading
+        if np.isnan(
+            np.min(
+                np.array(
+                    [pose.pose.position.x, pose.pose.position.y, pose.pose.position.z]
+                )
             )
+        ):
+            return
 
-        filtered_pose_ar = lwma(pose_ar)
+        if np.isnan(
+            np.min(
+                np.array(
+                    [
+                        pose.pose.orientation.x,
+                        pose.pose.orientation.y,
+                        pose.pose.orientation.z,
+                        pose.pose.orientation.w,
+                    ]
+                )
+            )
+        ):
+            return
 
-        def array_to_pose(ar: np.ndarray) -> Pose:
-            pose = Pose()
-            pose.position.x, pose.position.y, pose.position.z = ar[:3]
-            (
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z,
-                pose.orientation.w,
-            ) = R.from_euler("xyz", ar[3:]).as_quat()
-            return pose
-
-        # Update the pose to be the new filtered pose
-        pose.pose = array_to_pose(filtered_pose_ar)
-
-        self.localization_pub.publish(pose)
+        self.robot_pose_pub.publish(pose)
 
 
-class GazeboLocalizer(Localizer):
+class GazeboLocalizer(PoseLocalizer):
     """Localize the BlueROV2 using the Gazebo ground-truth data."""
 
     def __init__(self) -> None:
@@ -452,6 +466,7 @@ class GazeboLocalizer(Localizer):
         self.declare_parameter("gazebo_odom_topic", "")
 
         # Subscribe to that topic so that we can proxy messages to the ArduSub EKF
+        # and the Blue EKF
         self.create_subscription(
             Odometry,
             self.get_parameter("gazebo_odom_topic").get_parameter_value().string_value,
@@ -459,31 +474,59 @@ class GazeboLocalizer(Localizer):
             1,
         )
 
-        self.woo_pub = self.create_publisher(PoseWithCovarianceStamped, "/party", 1)
-
-    def proxy_odom_cb(self, msg: Odometry) -> None:
+    def proxy_odom_cb(self, odom: Odometry) -> None:
         """Proxy the pose data from the Gazebo odometry ground-truth data.
 
         Args:
-            msg: The Gazebo ground-truth odometry for the BlueROV2.
+            odom: The Gazebo ground-truth odometry for the BlueROV2.
         """
         pose = PoseStamped()
 
         # Pose is provided in the parent header frame
-        pose.header.frame_id = msg.header.frame_id
-        pose.header.stamp = msg.header.stamp
+        pose.header.frame_id = odom.header.frame_id
+        pose.header.stamp = odom.header.stamp
 
-        # We only need the pose; we don't need the covariance
-        pose.pose = msg.pose.pose
+        pose.pose = odom.pose.pose
+        self.vision_pose_pub.publish(pose)
 
-        wooo = PoseWithCovarianceStamped()
-        wooo.header.frame_id = msg.header.frame_id
-        wooo.header.stamp = msg.header.stamp
-        wooo.pose = msg.pose
+        pose_cov = PoseWithCovarianceStamped()
+        pose_cov.header.frame_id = odom.header.frame_id
+        pose_cov.header.stamp = odom.header.stamp
+        pose_cov.pose = odom.pose
 
-        self.woo_pub.publish(wooo)
+        self.robot_odom_pub.publish(pose_cov)
 
-        self.localization_pub.publish(pose)
+
+class Bar30Localizer(PoseLocalizer):
+    """Interface for localizing the vehicle using the Blue Robotics Bar30 sensor."""
+
+    def __init__(self) -> None:
+        super().__init__("bar30_localizer")
+
+        self.declare_parameters("water_density", 998.0)  # kg / m^3
+        self.declare_parameters("atmospheric_pressure", 101100.0)  # Pa
+
+        # Subscribe to topic for getting barometer reading
+        self.create_subscription(
+            FluidPressure,
+            "/blue/bar30/pressure",
+            lambda msg: self.calculate_depth_cb(pressure=msg, water_density=self.get_parameter("water_density").get_parameter_value().double_value, atmospheric_pressure=self.get_parameter("atmospheric_pressure").get_parameter_value().double_value),
+            qos_profile_sensor_data,
+        )
+
+    def calculate_depth_cb(self, pressure: FluidPressure, water_density: float, atmospheric_pressure: float) -> None:
+        depth = pressure.fluid_pressure - atmospheric_pressure
+        depth /= water_density * 9.85
+
+        pose = PoseWithCovarianceStamped()
+        pose.header = pressure.header
+        pose.pose.pose.position.z = depth
+
+        # Measurements were evaluated
+        cov = np.zeros((6, 6))
+        cov[3, 3] = 0.2
+
+        self.robot_pose_pub(pose)
 
 
 def main_aruco(args: list[str] | None = None):
