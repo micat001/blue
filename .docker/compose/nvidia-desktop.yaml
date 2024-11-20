@@ -26,5 +26,5 @@ services:
       - /dev:/dev
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /mnt/wslg:/mnt/wslg
-      - ../../src:/home/ubuntu/ws_blue/src
+      - ../../../../src:/home/ubuntu/ws_blue/src
     command: tail -f /dev/null

@@ -156,19 +156,36 @@ class PoseLocalizer(Localizer):
             "/mavros/vision_pose/pose_cov",
             qos_profile_default,
         )
+        self.tf_broadcaster = TransformBroadcaster(self)
 
     def publish(self) -> None:
         """Publish a pose message to the ArduSub EKF."""
         if isinstance(self.state, PoseStamped):
             self.vision_pose_pub.publish(self.state)
+            msg = self.state.pose
         elif isinstance(self.state, PoseWithCovarianceStamped):
             self.vision_pose_cov_pub.publish(self.state)
+            msg = self.state.pose.pose
         else:
             raise TypeError(
                 "Invalid state type provided for publishing. Expected one of"
                 f" {PoseStamped.__name__}, {PoseWithCovarianceStamped.__name__}: got"
                 f" {self.state.__class__.__name__}"
             )
+        # Publishes a TF link from map -> base_link
+        map_to_base_link = TransformStamped()
+        map_to_base_link.header.stamp = self.state.header.stamp
+        map_to_base_link.header.frame_id = self.MAP_FRAME
+        map_to_base_link.child_frame_id = self.BASE_LINK_FRAME
+        map_to_base_link.transform.translation.x = msg.position.x
+        map_to_base_link.transform.translation.y = msg.position.y
+        map_to_base_link.transform.translation.z = msg.position.z
+        map_to_base_link.transform.rotation.x = msg.orientation.x
+        map_to_base_link.transform.rotation.y = msg.orientation.y
+        map_to_base_link.transform.rotation.z = msg.orientation.z
+        map_to_base_link.transform.rotation.w = msg.orientation.w
+
+        self.tf_broadcaster.sendTransform(map_to_base_link)
 
 
 class TwistLocalizer(Localizer):
@@ -191,6 +208,8 @@ class TwistLocalizer(Localizer):
             "/mavros/vision_speed/speed_cov",
             qos_profile_default,
         )
+
+        self.tf_broadcaster = TransformBroadcaster(self)
 
     def publish(self) -> None:
         """Publish a twist message to the ArduSub EKF."""
@@ -626,8 +645,6 @@ class GazeboLocalizer(PoseLocalizer):
             Odometry, odom_topic, self.update_odom_cb, qos_profile_sensor_data
         )
 
-        self.tf_broadcaster = TransformBroadcaster(self)
-
     def update_odom_cb(self, msg: Odometry) -> None:
         """Proxy the pose data from the Gazebo odometry ground-truth data.
 
@@ -639,21 +656,6 @@ class GazeboLocalizer(PoseLocalizer):
         pose_cov.pose = msg.pose
 
         self.state = pose_cov
-
-        # Publishes a TF link from map -> base_link
-        map_to_base_link = TransformStamped()
-        map_to_base_link.header.stamp = msg.header.stamp
-        map_to_base_link.header.frame_id = self.MAP_FRAME
-        map_to_base_link.child_frame_id = self.BASE_LINK_FRAME
-        map_to_base_link.transform.translation.x = msg.pose.pose.position.x
-        map_to_base_link.transform.translation.y = msg.pose.pose.position.y
-        map_to_base_link.transform.translation.z = msg.pose.pose.position.z
-        map_to_base_link.transform.rotation.x = msg.pose.pose.orientation.x
-        map_to_base_link.transform.rotation.y = msg.pose.pose.orientation.y
-        map_to_base_link.transform.rotation.z = msg.pose.pose.orientation.z
-        map_to_base_link.transform.rotation.w = msg.pose.pose.orientation.w
-
-        self.tf_broadcaster.sendTransform(map_to_base_link)
 
 
 def main_aruco(args: list[str] | None = None):

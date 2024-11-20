@@ -245,6 +245,12 @@ export GZ_SIM_SYSTEM_PLUGIN_PATH=\$HOME/ardupilot_gazebo/build:\$GZ_SIM_SYSTEM_P
 export GZ_SIM_RESOURCE_PATH=\$HOME/ardupilot_gazebo/models:\$HOME/ardupilot_gazebo/worlds:\$GZ_SIM_RESOURCE_PATH
 EOT
 
+# Add pretty colors to bash terminal
+RUN echo 'export PS1="\[\033[01;32m\]\u@\h:\[\033[01;34m\]\w\[\033[00m\]\$ "' >> ~/.bashrc && \
+    echo 'alias ls="ls --color=auto"' >> ~/.bashrc && \
+    echo 'export CLICOLOR=1' >> ~/.bashrc && \
+    echo 'export LSCOLORS=GxFxCxDxBxegedabagaced' >> ~/.bashrc
+
 FROM desktop AS desktop-nvidia
 
 # Install NVIDIA software
