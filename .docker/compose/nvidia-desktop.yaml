@@ -1,6 +1,6 @@
 services:
   blue:
-    image: ghcr.io/robotic-decision-making-lab/blue:rolling-desktop-nvidia
+    image: ghcr.io/apl-ocean-engineering/blue:jazzy-desktop-nvidia
     environment:
       - DISPLAY=${DISPLAY}
       - XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
@@ -26,4 +26,5 @@ services:
       - /dev:/dev
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /mnt/wslg:/mnt/wslg
+      - ../../src:/home/ubuntu/ws_blue/src
     command: tail -f /dev/null
