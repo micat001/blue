@@ -32,6 +32,7 @@ from geometry_msgs.msg import (
     Pose,
     PoseStamped,
     PoseWithCovarianceStamped,
+    TransformStamped,
     TwistStamped,
     TwistWithCovarianceStamped,
 )
@@ -50,7 +51,7 @@ from rclpy.qos import (
 from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import TransformException  # type: ignore
-from tf2_ros import Time
+from tf2_ros import Time, TransformBroadcaster
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
@@ -60,7 +61,7 @@ class Localizer(Node, ABC):
 
     MAP_FRAME = "map"
     MAP_NED_FRAME = "map_ned"
-    BASE_LINK_FRAME = "base_link"
+    BASE_LINK_FRAME = "base_footprint"
     BASE_LINK_FRD_FRAME = "base_link_frd"
     CAMERA_FRAME = "camera_link"
 
@@ -625,6 +626,8 @@ class GazeboLocalizer(PoseLocalizer):
             Odometry, odom_topic, self.update_odom_cb, qos_profile_sensor_data
         )
 
+        self.tf_broadcaster = TransformBroadcaster(self)
+
     def update_odom_cb(self, msg: Odometry) -> None:
         """Proxy the pose data from the Gazebo odometry ground-truth data.
 
@@ -636,6 +639,21 @@ class GazeboLocalizer(PoseLocalizer):
         pose_cov.pose = msg.pose
 
         self.state = pose_cov
+
+        # Publishes a TF link from map -> base_link
+        map_to_base_link = TransformStamped()
+        map_to_base_link.header.stamp = msg.header.stamp
+        map_to_base_link.header.frame_id = self.MAP_FRAME
+        map_to_base_link.child_frame_id = self.BASE_LINK_FRAME
+        map_to_base_link.transform.translation.x = msg.pose.pose.position.x
+        map_to_base_link.transform.translation.y = msg.pose.pose.position.y
+        map_to_base_link.transform.translation.z = msg.pose.pose.position.z
+        map_to_base_link.transform.rotation.x = msg.pose.pose.orientation.x
+        map_to_base_link.transform.rotation.y = msg.pose.pose.orientation.y
+        map_to_base_link.transform.rotation.z = msg.pose.pose.orientation.z
+        map_to_base_link.transform.rotation.w = msg.pose.pose.orientation.w
+
+        self.tf_broadcaster.sendTransform(map_to_base_link)
 
 
 def main_aruco(args: list[str] | None = None):
