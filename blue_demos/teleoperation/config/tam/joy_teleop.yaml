@@ -1,0 +1,29 @@
+joy_node:
+  ros__parameters:
+    dev: /dev/input/js0
+
+joy_teleop:
+  ros__parameters:
+
+    manual_control:
+      type: topic
+      interface_type: geometry_msgs/msg/Wrench
+      topic_name: /cmd_wrench
+      deadman_axes: [2]
+      axis_mappings:
+        force-x:
+          axis: 1
+          scale: 0.4
+          offset: 0
+        force-y:
+          axis: 0
+          scale: 0.4
+          offset: 0
+        force-z:
+          axis: 4
+          scale: 0.4
+          offset: 0
+        torque-z:
+          axis: 3
+          scale: 1.0
+          offset: 0

@@ -1,0 +1,10 @@
+message_transforms:
+  ros__parameters:
+
+    incoming_topics:
+      - /cmd_wrench
+
+    transforms:
+      /cmd_wrench:
+        outgoing_topic: /thruster_allocation_matrix_controller/reference
+        message_type: geometry_msgs/msg/Wrench
