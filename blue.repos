@@ -17,5 +17,10 @@ repositories:
 
   mobile_to_maritime:
     type: git
-    url: https://github.com/micat001/mobile_to_maritime.git
-    version: dev/ned_bug_fix
+    url: https://github.com/Robotic-Decision-Making-Lab/mobile_to_maritime.git
+    version: main
+
+  fiducial_localization_sw:
+    type: git
+    url: https://gitlab.com/apl-ocean-engineering/fiducial_localization_sw.git
+    version: main

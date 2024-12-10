@@ -230,7 +230,8 @@ EOT
 RUN echo 'export PS1="\[\033[01;32m\]\u@\h:\[\033[01;34m\]\w\[\033[00m\]\$ "' >> ~/.bashrc && \
     echo 'alias ls="ls --color=auto"' >> ~/.bashrc && \
     echo 'export CLICOLOR=1' >> ~/.bashrc && \
-    echo 'export LSCOLORS=GxFxCxDxBxegedabagaced' >> ~/.bashrc
+    echo 'export LSCOLORS=GxFxCxDxBxegedabagaced' >> ~/.bashrc &&\
+    echo 'printf "\e]11;#000000\e\\\n"' >> ~/.bashrc
 
 FROM desktop AS desktop-nvidia
 
