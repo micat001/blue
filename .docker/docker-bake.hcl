@@ -2,7 +2,8 @@
 # Override these variables with environment variables
 # e.g.
 #
-#   BLUE_ROS_DISTRO=iron docker buildx bake
+#   BLUE_ROS_DISTRO=iron docker buildx bake --push (for every image)
+# docker buildx bake desktop-nvidia --load (for non arm builds)
 #
 # or
 #
@@ -85,6 +86,7 @@ target "desktop" {
 target "desktop-nvidia" {
   inherits = [ "desktop", "docker-metadata-action-desktop-nvidia" ]
   target = "desktop-nvidia"
+  no-cache-filter = ["desktop-nvidia"]
   tags = [
     "ghcr.io/${BLUE_GITHUB_REPO}:${BLUE_ROS_DISTRO}-desktop-nvidia"
   ]

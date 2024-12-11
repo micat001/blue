@@ -120,7 +120,8 @@ RUN sudo apt-get -q update \
 
 # Actually build workspace
 RUN . "/opt/ros/${ROS_DISTRO}/setup.sh" \
-    && colcon build
+    && colcon build --packages-skip-regex '^blue_.*$' && \
+    colcon build --symlink-install --packages-select-regex '^blue_.*$'
 
 RUN echo "source ${USER_WORKSPACE}/install/setup.bash" >> /home/$USERNAME/.bashrc \
     && echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/$USERNAME/.bashrc \
@@ -208,7 +209,9 @@ RUN sudo apt-get -q update \
 # Modify the 'colcon build' line to be 'MAKEFLAGS="-j1 -l1" colcon build'
 # This will limit the amount of RAM that colcon is allowed to use
 RUN . "/opt/ros/${ROS_DISTRO}/setup.sh" \
-    && colcon build
+    && colcon build --packages-skip-regex '^blue_.*$' && \
+    colcon build --symlink-install --packages-select-regex '^blue_.*$'
+
 
 # Setup the simulation environment variables
 RUN  <<EOT cat >> /home/$USERNAME/.bashrc
@@ -231,7 +234,11 @@ RUN echo 'export PS1="\[\033[01;32m\]\u@\h:\[\033[01;34m\]\w\[\033[00m\]\$ "' >>
     echo 'alias ls="ls --color=auto"' >> ~/.bashrc && \
     echo 'export CLICOLOR=1' >> ~/.bashrc && \
     echo 'export LSCOLORS=GxFxCxDxBxegedabagaced' >> ~/.bashrc &&\
-    echo 'printf "\e]11;#000000\e\\\n"' >> ~/.bashrc
+    echo 'printf "\e]11;#000000\e\\\n"' >> ~/.bashrc && \
+    echo 'source ~/.bashrc' >> ~/.bash_profile
+
+# Optional: Change the shell to bash if not already set
+SHELL ["/bin/bash", "-c"]
 
 FROM desktop AS desktop-nvidia
 
@@ -253,3 +260,13 @@ RUN sudo apt-get update \
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
 ENV QT_X11_NO_MITSHM=1
+
+# Add pretty colors to bash and set background color to black
+RUN echo 'export PS1="\[\033[01;32m\]\u@\h:\[\033[01;34m\]\w\[\033[00m\]\$ "' >> ~/.bashrc && \
+    echo 'alias ls="ls --color=auto"' >> ~/.bashrc && \
+    echo 'export CLICOLOR=1' >> ~/.bashrc && \
+    echo 'export LSCOLORS=GxFxCxDxBxegedabagaced' >> ~/.bashrc && \
+    echo 'printf "\e]11;#000000\e\\\n"' >> ~/.bashrc
+
+# Optional: Change the shell to bash if not already set
+SHELL ["/bin/bash", "-c"]
