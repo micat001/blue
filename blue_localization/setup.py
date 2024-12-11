@@ -49,8 +49,9 @@ setup(
             "camera = blue_localization.source:main_camera",
             "qualisys_mocap = blue_localization.source:main_qualisys_mocap",
             "aruco_marker_localizer = blue_localization.localizer:main_aruco",
-            "qualisys_localizer = blue_localization.localizer:main_qualisys",
             "gazebo_localizer = blue_localization.localizer:main_gazebo",
+            "pnp_localizer = blue_localization.localizer:main_pnp",
+            "qualisys_localizer = blue_localization.localizer:main_qualisys",
         ],
     },
 )

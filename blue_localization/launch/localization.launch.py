@@ -46,7 +46,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "localization_source",
             default_value="mocap",
-            choices=["mocap", "camera", "gazebo"],
+            choices=["mocap", "camera", "gazebo", "pnp"],
             description="The localization source to stream from.",
         ),
         DeclareLaunchArgument(
@@ -157,6 +157,19 @@ def generate_launch_description() -> LaunchDescription:
             ],
             condition=IfCondition(
                 PythonExpression(["'", localization_source, "' == 'gazebo'"])
+            ),
+        ),
+        Node(
+            package="blue_localization",
+            executable="pnp_localizer",
+            name="pnp_localizer",
+            output="both",
+            parameters=[
+                LaunchConfiguration("config_filepath"),
+                {"use_sim_time": use_sim_time},
+            ],
+            condition=IfCondition(
+                PythonExpression(["'", localization_source, "' == 'pnp'"])
             ),
         ),
     ]
